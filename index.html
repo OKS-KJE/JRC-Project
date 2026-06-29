@@ -683,6 +683,7 @@ tr.row-closed .hull{text-decoration:line-through;}
 .view-toggle .vt:last-child{border-right:none;}
 .view-toggle .vt.active{background:#1D4ED8;color:#fff;}
 .view-toggle .vt span{opacity:.85;margin-left:4px;font-variant-numeric:tabular-nums;}
+.cloud-status{font-size:11px;font-weight:600;color:#94A3B8;white-space:nowrap;margin-right:2px;}
 </style>
 </head>
 <body>
@@ -696,6 +697,7 @@ tr.row-closed .hull{text-decoration:line-through;}
     </div>
   </div>
   <div class="header-meta">
+    <span id="cloudStatus" class="cloud-status" title="Auto-save status">● Local only</span>
     <div class="date-badge" id="todayBadge">—</div>
     <button class="btn" onclick="saveAll()" style="background:#16A34A;" title="Save to browser storage (and Supabase when configured)">💾 Save</button>
     <div class="export-wrap">
@@ -1646,6 +1648,7 @@ function toggleClose(id, ev){
   if(!r) return;
   r.closed = !r.closed;
   saveData(true);
+  cloudSaveOneDebounced(r);
   _renderTrackerPage();
   if(typeof renderDashboard==='function') renderDashboard();
   showToast(r.closed ? ('Hull '+r.hull+' ('+(r.ship||r.stage)+') closed') : ('Hull '+r.hull+' reopened'), 'success');
@@ -1904,6 +1907,7 @@ function toggleDone() {
   _renderTrackerPage();
   renderDashboard();
   saveData();
+  cloudSaveOneDebounced(DATA[id]);
   _updateDoneUI(id);
 }
 
@@ -1937,12 +1941,14 @@ function updateAPDeadline(id) {
   renderDashboard();
   _refreshDetailPanel(id);
   saveData();
+  cloudSaveOneDebounced(DATA[id]);
 }
 function updateField(id, key, val) {
   DATA[id][key] = val || null;
   _renderTrackerPage();
   renderDashboard();
   saveData(true);
+  cloudSaveOneDebounced(DATA[id]);
 }
 // "1st Sched" (hwSched) → auto-fill FOB 1st Plan (fobPlan).
 // Fills the plan when it's empty; if the FOB 1st Plan still mirrors the
@@ -1961,6 +1967,7 @@ function syncHwSched(id, val){
   _renderTrackerPage();
   renderDashboard();
   saveData(true);
+  cloudSaveOneDebounced(DATA[id]);
 }
 function fillTodayIfEmpty(input) {
   if (!input.value) {
@@ -1986,6 +1993,7 @@ function updateActual(id, key, val){
 
   // 4. Auto-save silently
   saveData(true);
+  cloudSaveOneDebounced(DATA[id]);   // ← per-column schedule auto-save to cloud
 
   showToast(`Updated — Hull ${DATA[id].hull}`, 'success');
 }
@@ -2026,6 +2034,7 @@ function saveDrawModal(){
   });
   var m=document.getElementById('dm_memo'); if(m)r.drawMemo=m.value;
   saveData(true);_renderTrackerPage();renderDashboard();closeDrawModal();
+  cloudSaveOne(r);
   showToast('Drawing saved - '+r.hull,'success');
 }
 function openAddModal(){ document.getElementById('addModal').classList.add('open'); }
@@ -2207,6 +2216,7 @@ function addHull() {
   renderDashboard();
   resetModal();
   saveData();
+  if(SUPABASE_READY && sb) cloudSave();
   showConfirm(_cfmData);
 }
 
@@ -2397,7 +2407,7 @@ function saveData(silent) {
 // Load all hulls from Supabase into DATA. Falls back to localStorage when
 // the cloud isn't configured, is empty, or errors out.
 async function cloudLoad(){
-  if(!(SUPABASE_READY && sb)){ loadSavedData(); return; }
+  if(!(SUPABASE_READY && sb)){ loadSavedData(); setCloudStatus(); return; }
   try{
     const { data, error } = await sb.from('hulls').select('*').order('id');
     if(error) throw error;
@@ -2409,8 +2419,10 @@ async function cloudLoad(){
       // and let the user push it up once with 💾 Save.
       showToast('Cloud is empty — press 💾 Save to upload current data', 'success');
     }
+    setCloudStatus('synced');
   }catch(e){
     console.error('cloudLoad failed:', e);
+    setCloudStatus('error');
     showToast('Cloud load failed — using local data', 'error');
     loadSavedData();
   }
@@ -2430,24 +2442,56 @@ async function cloudSave(){
     }));
     const { error } = await sb.from('hulls').upsert(rows);
     if(error) throw error;
+    setCloudStatus('synced');
     showToast('Saved to Supabase — ' + rows.length + ' hulls', 'success');
   }catch(e){
     console.error('cloudSave failed:', e);
+    setCloudStatus('error');
     showToast('Cloud save failed — saved locally instead', 'error');
     saveData(true);
   }
 }
 
-// Push a single record (handy for an auto-save-per-edit mode later).
+// Push a single record. Used by per-edit auto-save.
 async function cloudSaveOne(r){
   if(!(SUPABASE_READY && sb) || !r) return;
   try{
-    await sb.from('hulls').upsert({
+    const { error } = await sb.from('hulls').upsert({
       id: r.id, hull: r.hull || null,
       stage: (r.stage != null ? String(r.stage) : null),
       closed: !!r.closed, data: r, updated_at: new Date().toISOString()
     });
-  }catch(e){ console.error('cloudSaveOne failed:', e); }
+    if(error) throw error;
+    setCloudStatus('synced');
+  }catch(e){ console.error('cloudSaveOne failed:', e); setCloudStatus('error'); }
+}
+
+// Debounced per-record auto-save: rapid edits to one hull collapse into a
+// single cloud write ~0.8s after the last change (avoids a request per keystroke).
+var _cloudTimers = {};
+function cloudSaveOneDebounced(r){
+  if(!(SUPABASE_READY && sb) || !r) return;
+  setCloudStatus('saving');
+  var id = r.id;
+  if(_cloudTimers[id]) clearTimeout(_cloudTimers[id]);
+  _cloudTimers[id] = setTimeout(function(){
+    delete _cloudTimers[id];
+    cloudSaveOne(r);
+  }, 800);
+}
+
+// Header cloud-sync indicator.
+function setCloudStatus(state){
+  var el = document.getElementById('cloudStatus');
+  if(!el) return;
+  if(!(SUPABASE_READY && sb)){ el.textContent = '● Local only'; el.style.color = '#94A3B8'; return; }
+  if(state === 'saving'){ el.textContent = '⟳ Saving…'; el.style.color = '#D97706'; }
+  else if(state === 'error'){ el.textContent = '⚠ Sync error'; el.style.color = '#DC2626'; }
+  else {
+    var d = new Date();
+    el.textContent = '☁ Synced ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    el.style.color = '#16A34A';
+  }
 }
 
 // Bound to the 💾 Save button: always keep a local cache, and push to cloud
