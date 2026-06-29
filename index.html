@@ -2048,10 +2048,12 @@ function updateActual(id, key, val){
   // 2. Refresh dashboard KPIs + stage bars
   renderDashboard();
 
-  // 3. Refresh the detail panel in-place (re-render milestone badges)
-  _refreshDetailPanel(id);
+  // NOTE: do NOT rebuild the detail panel here. Re-rendering on every date
+  // input destroyed the active input and reset the modal to the Info tab
+  // ("field closes on select"). Milestone badges refresh next time the panel
+  // is opened; the background table/dashboard above already reflect the change.
 
-  // 4. Auto-save silently
+  // 3. Auto-save silently
   saveData(true);
   cloudSaveOneDebounced(DATA[id]);   // ← per-column schedule auto-save to cloud
 
