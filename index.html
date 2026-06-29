@@ -785,9 +785,8 @@ tr.row-closed .hull{text-decoration:line-through;}
     </select>
     <select id="filterStatus" onchange="renderTracker()">
       <option value="">All Status</option>
-      <option value="Delay">Delay</option>
+      <option value="Delayed">Delayed</option>
       <option value="In Progress">In Progress</option>
-      <option value="Pending">Pending</option>
       <option value="Shipped">Shipped</option>
     </select>
     <button class="btn secondary" onclick="clearFilters()">Reset</button>
@@ -1343,6 +1342,16 @@ function calcStatus(plan, actual, preDone){
   if(diff <= 14) return 'progress';
   return 'none';
 }
+// Status model for the detail-panel tabs (no "Pending"):
+//   actual set                 → 'complete' (Done)
+//   today > plan + delayDays    → 'delay'    (Delayed)
+//   otherwise                   → 'progress' (In Progress)
+function statusFor(plan, actual, delayDays){
+  if(actual) return 'complete';
+  var p = parseDate(plan);
+  if(p && diffDays(p, TODAY) > delayDays) return 'delay';
+  return 'progress';
+}
 
 function calcDelayDays(plan, actual){
   const p = parseDate(plan); if(!p) return 0;
@@ -1381,6 +1390,7 @@ let DATA = RAW.filter(r=>r[0]!=='EX)').map((r,i) => {
     lcPlan:lcOrig||null, lcActual:null, fobActual:shippedStr||null,
     fob2Plan:null,fob2Actual:null, fob3Plan:null,fob3Actual:null, fobSTPlan:null,fobSTActual:null,
     exfacPlan:exfacOrig||null, exfacActual:null,
+    exfac2Plan:null,exfac2Actual:null, exfac3Plan:null,exfac3Actual:null,
     cargoPlan:null, cargoActual:null, trPlan:trOrig||null, trActual:null,
     ihmPlan:null,ihmActual:null, batteryPlan:null,batteryActual:null,
     pwPlan:null,pwActual:null, serialPlan:null,serialActual:null,
@@ -1390,10 +1400,10 @@ let DATA = RAW.filter(r=>r[0]!=='EX)').map((r,i) => {
 
 function getOverall(rec){
   if(rec.manualDone||rec.shipped||rec.fobActual||rec.delivered) return 'done';
-  const statuses=[calcStatus(rec.lcPlan,rec.lcActual),calcStatus(rec.exfacPlan,rec.exfacActual),calcStatus(rec.trPlan,rec.trActual)];
+  const D=14;
+  const statuses=[statusFor(rec.lcPlan,rec.lcActual,D),statusFor(rec.exfacPlan,rec.exfacActual,D),statusFor(rec.trPlan,rec.trActual,D)];
   if(statuses.some(s=>s==='delay')) return 'delay';
-  if(statuses.some(s=>s==='progress')) return 'progress';
-  return 'none';
+  return 'progress';   // no "Pending" — defaults to In Progress
 }
 
 function getDelayStage(rec){
@@ -1401,7 +1411,7 @@ function getDelayStage(rec){
     ['L/C',rec.lcPlan,rec.lcActual],['ExFac',rec.exfacPlan,rec.exfacActual],['TR',rec.trPlan,rec.trActual],
   ];
   
-  return pairs.filter(function(x){return calcStatus(x[1],x[2])==='delay';}).map(function(x){return x[0];}).join(' ');
+  return pairs.filter(function(x){return statusFor(x[1],x[2],14)==='delay';}).map(function(x){return x[0];}).join(' ');
 }
 
 function getMaxDelay(rec){
@@ -1447,7 +1457,6 @@ function renderDashboard(){
     const yr    = active;
     const yD    = yr.filter(r=>getOverall(r)==='delay').length;
     const yP    = yr.filter(r=>getOverall(r)==='progress').length;
-    const yNone = yr.filter(r=>getOverall(r)==='none').length;
     const yDone = delivered.length;
     document.getElementById('yardSummary').innerHTML = `
       <div class="yard-card">
@@ -1456,7 +1465,6 @@ function renderDashboard(){
           <div class="ys-item"><div class="ys-val a">${yr.length}</div><div class="ys-label">Active</div></div>
           <div class="ys-item"><div class="ys-val r">${yD}</div><div class="ys-label">Delay</div></div>
           <div class="ys-item"><div class="ys-val b">${yP}</div><div class="ys-label">In Progress</div></div>
-          <div class="ys-item"><div class="ys-val" style="color:#6B7280">${yNone}</div><div class="ys-label">Pending</div></div>
           <div class="ys-item"><div class="ys-val g">${yDone}</div><div class="ys-label">Shipped</div></div>
         </div>
       </div>`;
@@ -1471,9 +1479,9 @@ function renderDashboard(){
   const stageHtml = stages.map(s=>{
     const recs = active.filter(r=>r[s.plan]);
     const tot = recs.length;
-    const done = recs.filter(r=>calcStatus(r[s.plan],r[s.act])==='complete').length;
-    const prog = recs.filter(r=>calcStatus(r[s.plan],r[s.act])==='progress').length;
-    const del  = recs.filter(r=>calcStatus(r[s.plan],r[s.act])==='delay').length;
+    const done = recs.filter(r=>statusFor(r[s.plan],r[s.act],14)==='complete').length;
+    const prog = recs.filter(r=>statusFor(r[s.plan],r[s.act],14)==='progress').length;
+    const del  = recs.filter(r=>statusFor(r[s.plan],r[s.act],14)==='delay').length;
     const pct = (n)=> tot?Math.round(n/tot*100):0;
     return `<div class="stage-card">
       <div class="stage-num">${s.num}</div>
@@ -1615,13 +1623,13 @@ function _sortAccessor(key){
     case 'hwSched':     return function(r){ return _dateNum(r.hwSched); };
     case 'lcPlan':      return function(r){ return _dateNum(r.lcPlan); };
     case 'lcActual':    return function(r){ return _dateNum(r.lcActual); };
-    case 'lcStatus':    return function(r){ return _statusOrd(calcStatus(r.lcPlan,r.lcActual,_doneFlag(r))); };
+    case 'lcStatus':    return function(r){ return _statusOrd(_doneFlag(r)?'complete':statusFor(r.lcPlan,r.lcActual,14)); };
     case 'exfacPlan':   return function(r){ return _dateNum(r.exfacPlan); };
     case 'exfacActual': return function(r){ return _dateNum(r.exfacActual); };
-    case 'exfacStatus': return function(r){ return _statusOrd(calcStatus(r.exfacPlan,r.exfacActual,_doneFlag(r))); };
+    case 'exfacStatus': return function(r){ return _statusOrd(_doneFlag(r)?'complete':statusFor(r.exfacPlan,r.exfacActual,14)); };
     case 'trPlan':      return function(r){ return _dateNum(r.trPlan); };
     case 'trActual':    return function(r){ return _dateNum(r.trActual); };
-    case 'trStatus':    return function(r){ return _statusOrd(calcStatus(r.trPlan,r.trActual,_doneFlag(r))); };
+    case 'trStatus':    return function(r){ return _statusOrd(_doneFlag(r)?'complete':statusFor(r.trPlan,r.trActual,14)); };
     case 'fob':         return function(r){ return _dateNum(r.fobActual||r.shipped); };
     case 'fobStatus':   return function(r){ return _statusOrd(getOverall(r)); };
     case 'overall':     return function(r){ return _statusOrd(getOverall(r)); };
@@ -1767,29 +1775,34 @@ function showDetail(id){
   function _buildSchedulePanel(r,id) {
     // "1st Sched" (hwSched) auto-fills the FOB 1st Plan when it's still empty
     if(r.hwSched && !r.fobPlan){ r.fobPlan = r.hwSched; }
-    var items=[['L/C Open','lcPlan','lcActual'],['JRC Ex-Factory','exfacPlan','exfacActual'],
-      ['Cargo Ready','cargoPlan','cargoActual'],['TR Issued','trPlan','trActual'],
-      ['FOB 1st','fobPlan','fobActual'],['FOB 2nd','fob2Plan','fob2Actual'],
-      ['FOB 3rd','fob3Plan','fob3Actual'],['Sea Trial date','fobSTPlan','fobSTActual']];
-    var rows='';
-    items.forEach(function(it){
-      var name=it[0],pKey=it[1],aKey=it[2];
-      var isFob=name.indexOf('FOB')===0||name.indexOf('Sea Trial')===0;
-      var bg=isFob?'#ECFDF5':'#F0F6FF', bd=isFob?'#A7F3D0':'#BFDBFE', tc=isFob?'#047857':'#1E40AF';
-      var planHint=(pKey==='fobPlan'&&r.hwSched&&r.fobPlan===r.hwSched)?' <small style="color:#059669;font-weight:600;">← 1st Sched</small>':'';
-      rows+='<div style="background:'+bg+';border:1px solid '+bd+';border-radius:6px;padding:10px 12px;">'
-        +'<div style="font-size:11px;font-weight:700;color:'+tc+';margin-bottom:6px;">'+name+' '+badge(calcStatus(r[pKey],r[aKey]))+'</div>'
-        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
-        +'<div><label style="font-size:9px;color:#64748B;font-weight:600;display:block;margin-bottom:2px">Plan'+planHint+'</label>'
-        +'<input type="date" value="'+(r[pKey]||'')+'" style="width:100%;background:#fff;border:1px solid #BFDBFE;color:#0F172A;font-family:monospace;font-size:11px;padding:4px 7px;border-radius:4px;outline:none;"'
-        +' data-rid="'+id+'" data-key="'+pKey+'" onchange="updateByData(this)" oninput="updateByData(this)"></div>'
-        +'<div><label style="font-size:9px;color:#64748B;font-weight:600;display:block;margin-bottom:2px">Actual</label>'
-        +'<input type="date" value="'+(r[aKey]||'')+'" style="width:100%;background:#fff;border:1px solid #BFDBFE;color:#0F172A;font-family:monospace;font-size:11px;padding:4px 7px;border-radius:4px;outline:none;"'
-        +' onfocus="fillTodayIfEmpty(this)" data-rid="'+id+'" data-key="'+aKey+'" onchange="updateByData(this)" oninput="updateByData(this)"></div>'
-        +'</div></div>';
+    // JRC Ex-Factory default = FOB plan − 28d (editable; fills only when empty)
+    [['fobPlan','exfacPlan'],['fob2Plan','exfac2Plan'],['fob3Plan','exfac3Plan']].forEach(function(k){
+      if(!r[k[1]] && r[k[0]]){ var d=parseDate(r[k[0]]); if(d) r[k[1]]=fmtDateISO(addDays(d,-28)); }
     });
+    var D = 14; // Delayed once today is more than 2 weeks past the plan date
+    function block(title, pKey, aKey){
+      return '<div style="background:#F0F6FF;border:1px solid #BFDBFE;border-radius:6px;padding:10px 12px;">'
+        +'<div style="font-size:11px;font-weight:700;color:#1E40AF;margin-bottom:6px;">'+title+' '+badge(statusFor(r[pKey],r[aKey],D))+'</div>'
+        +_planActualPair(id,pKey,aKey,'Plan','#BFDBFE')+'</div>';
+    }
+    function fobBlock(title, fp, fa, ep, ea){
+      var hint=(fp==='fobPlan'&&r.hwSched&&r.fobPlan===r.hwSched)?' <small style="color:#059669;font-weight:600;">← 1st Sched</small>':'';
+      return '<div style="background:#ECFDF5;border:1px solid #A7F3D0;border-radius:6px;padding:10px 12px;">'
+        +'<div style="font-size:11px;font-weight:700;color:#047857;margin-bottom:6px;">'+title+' '+badge(statusFor(r[fp],r[fa],D))+hint+'</div>'
+        +_planActualPair(id,fp,fa,'FOB Plan','#A7F3D0')
+        +'<div style="font-size:10px;font-weight:700;color:#9A3412;margin:10px 0 4px;border-top:1px dashed #A7F3D0;padding-top:8px;">JRC Ex-Factory '+badge(statusFor(r[ep],r[ea],D))+'</div>'
+        +_planActualPair(id,ep,ea,'Plan','#FED7AA')+'</div>';
+    }
+    var rows=''
+      +block('L/C Open','lcPlan','lcActual')
+      +block('TR Issued','trPlan','trActual')
+      +fobBlock('FOB 1st','fobPlan','fobActual','exfacPlan','exfacActual')
+      +fobBlock('FOB 2nd','fob2Plan','fob2Actual','exfac2Plan','exfac2Actual')
+      +fobBlock('FOB 3rd','fob3Plan','fob3Actual','exfac3Plan','exfac3Actual')
+      +block('Sea Trial date','fobSTPlan','fobSTActual');
     return '<div class="dp-tab-panel" id="dp-panel-schedule">'
-      +'<div class="dp-section"><div class="dp-sec-title" style="color:#1D4ED8">FOB Milestone Actuals</div>'
+      +'<div class="dp-section"><div class="dp-sec-title" style="color:#1D4ED8">Schedule</div>'
+      +'<div style="font-size:10px;color:#64748B;margin-bottom:10px;">In Progress → Delayed when 2 weeks past plan (no actual) → Done on actual</div>'
       +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+rows+'</div>'
       +_memoBox(id,'schedMemo','Schedule Memo / Notes')
       +_tabSaveBtn(id)+'</div></div>';
@@ -1803,7 +1816,7 @@ function showDetail(id){
       var lbl=it[0],pKey=it[1],aKey=it[2],hint=it[3];
       rows+='<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:8px;padding:12px 14px;margin-bottom:8px;">'
         +'<div style="font-size:12px;font-weight:700;color:#4C1D95;margin-bottom:6px;">'+lbl
-        +' <small style="color:#7C3AED;font-weight:400;">'+hint+'</small> '+badge(calcStatus(r[pKey],r[aKey]))+'</div>'
+        +' <small style="color:#7C3AED;font-weight:400;">'+hint+'</small> '+badge(statusFor(r[pKey],r[aKey],7))+'</div>'
         +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
         +'<div><label style="font-size:9px;color:#6B7280;font-weight:600;display:block;margin-bottom:2px">Plan</label>'
         +'<input type="date" value="'+(r[pKey]||'')+'" onfocus="fillTodayIfEmpty(this)"'
@@ -1825,27 +1838,19 @@ function showDetail(id){
   }
 
   function _buildCertsPanel(r,id) {
+    var D = 7; // Delayed once today is more than 1 week past the request date
     var items=[['IHM','ihmPlan','ihmActual'],['Battery','batteryPlan','batteryActual'],
       ['PW','pwPlan','pwActual'],['Serial No','serialPlan','serialActual'],['Security','securityPlan','securityActual']];
     var rows='';
     items.forEach(function(it){
       var lbl=it[0],pKey=it[1],aKey=it[2];
       rows+='<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:6px;padding:10px 12px;margin-bottom:6px;">'
-        +'<div style="font-size:11px;font-weight:700;color:#5B21B6;margin-bottom:6px;">'+lbl+' '+badge(calcStatus(r[pKey],r[aKey]))+'</div>'
-        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
-        +'<div><label style="font-size:9px;color:#6B7280;font-weight:600;display:block;margin-bottom:2px">Plan</label>'
-        +'<input type="date" value="'+(r[pKey]||'')+'" onfocus="fillTodayIfEmpty(this)"'
-        +' style="width:100%;background:#fff;border:1px solid #C4B5FD;color:#1E1B4B;font-family:monospace;font-size:11px;padding:4px 7px;border-radius:4px;outline:none;"'
-        +' data-rid="'+id+'" data-key="'+pKey+'" onchange="updateByData(this)" oninput="updateByData(this)"></div>'
-        +'<div><label style="font-size:9px;color:#6B7280;font-weight:600;display:block;margin-bottom:2px">Actual</label>'
-        +'<input type="date" value="'+(r[aKey]||'')+'" onfocus="fillTodayIfEmpty(this)"'
-        +' style="width:100%;background:#fff;border:1px solid #C4B5FD;color:#1E1B4B;font-family:monospace;font-size:11px;padding:4px 7px;border-radius:4px;outline:none;"'
-        +' data-rid="'+id+'" data-key="'+aKey+'" onchange="updateByData(this)" oninput="updateByData(this)"></div>'
-        +'</div></div>';
+        +'<div style="font-size:11px;font-weight:700;color:#5B21B6;margin-bottom:6px;">'+lbl+' '+badge(statusFor(r[pKey],r[aKey],D))+'</div>'
+        +_planActualPair(id,pKey,aKey,'Request','#C4B5FD')+'</div>';
     });
     return '<div class="dp-tab-panel" id="dp-panel-certs">'
       +'<div class="dp-section"><div class="dp-sec-title" style="color:#5B21B6">Certificates</div>'
-      +'<div style="font-size:10px;color:#64748B;margin-bottom:10px;">Default plan = Sea Trial date · editable</div>'
+      +'<div style="font-size:10px;color:#64748B;margin-bottom:10px;">In Progress → Delayed when 1 week past Request (no actual) → Done on actual</div>'
       +rows+_memoBox(id,'certMemo','Certificate Memo / Notes')+_tabSaveBtn(id)+'</div></div>';
   }
 
@@ -1905,6 +1910,17 @@ function saveDetailRecord(id){
   saveData(true);
   if(SUPABASE_READY && sb){ cloudSaveOne(r); }
   showToast('Saved — Hull ' + r.hull + ((SUPABASE_READY && sb) ? ' ☁' : ' (local)'), 'success');
+}
+
+// Plan/Actual date-input pair (planLabel lets us show "Plan" or "Request").
+function _planActualPair(id, pKey, aKey, planLabel, bc){
+  var r = DATA[id];
+  return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
+    + '<div><label style="font-size:9px;color:#64748B;font-weight:600;display:block;margin-bottom:2px">' + planLabel + '</label>'
+    + '<input type="date" value="' + (r[pKey]||'') + '" style="width:100%;background:#fff;border:1px solid ' + bc + ';color:#0F172A;font-family:monospace;font-size:11px;padding:4px 7px;border-radius:4px;outline:none;" data-rid="' + id + '" data-key="' + pKey + '" onchange="updateByData(this)" oninput="updateByData(this)"></div>'
+    + '<div><label style="font-size:9px;color:#64748B;font-weight:600;display:block;margin-bottom:2px">Actual</label>'
+    + '<input type="date" value="' + (r[aKey]||'') + '" onfocus="fillTodayIfEmpty(this)" style="width:100%;background:#fff;border:1px solid ' + bc + ';color:#0F172A;font-family:monospace;font-size:11px;padding:4px 7px;border-radius:4px;outline:none;" data-rid="' + id + '" data-key="' + aKey + '" onchange="updateByData(this)" oninput="updateByData(this)"></div>'
+    + '</div>';
 }
 
 // Reusable "Notes" memo box (same amber style as the Drawing tab memo).
@@ -2016,10 +2032,9 @@ function _flashFieldSaved(id){
 function syncHwSched(id, val){
   var r = DATA[id];
   if(!r) return;
-  var prev = r.hwSched;
   r.hwSched = val || null;
-  if(val && (!r.fobPlan || r.fobPlan === prev)){
-    r.fobPlan = val;
+  if(val){
+    r.fobPlan = val;                 // 1st Sched always syncs into FOB 1st Plan
     var inp = document.querySelector('#dp-panel-schedule input[data-key="fobPlan"]');
     if(inp) inp.value = val;
   }
@@ -2071,7 +2086,7 @@ function openDrawModal(id){
   var items=[{k:'ap',lb:'AP Drawing',ht:'Approved (PO+14d)'},{k:'wd',lb:'WD Working Drawing',ht:''},{k:'fd',lb:'FD Final Drawing',ht:''}];
   var body='';
   items.forEach(function(it){
-    var p=r[it.k+'Plan']||''; var a=r[it.k+'Actual']||''; var s=calcStatus(p||null,a||null);
+    var p=r[it.k+'Plan']||''; var a=r[it.k+'Actual']||''; var s=statusFor(p||null,a||null,7);
     body+='<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:8px;padding:12px;margin-bottom:10px;">'
       +'<div style="font-size:12px;font-weight:700;color:#4C1D95;margin-bottom:8px;">'+it.lb+' <small style="color:#7C3AED;font-weight:400;">'+it.ht+'</small> '+badge(s)+'</div>'
       +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
@@ -2434,6 +2449,7 @@ const EDITABLE_FIELDS = [
   'apPlan','apActual','wdPlan','wdActual','fdPlan','fdActual',
   'lcPlan','lcActual','fobActual','fob2Plan','fob2Actual','fob3Plan','fob3Actual','fobSTPlan','fobSTActual',
   'exfacPlan','exfacActual','cargoPlan','cargoActual','trPlan','trActual',
+  'exfac2Plan','exfac2Actual','exfac3Plan','exfac3Actual',
   'ihmPlan','ihmActual','batteryPlan','batteryActual',
   'pwPlan','pwActual','serialPlan','serialActual',
   'securityPlan','securityActual','remark','third','closed',
@@ -2852,7 +2868,7 @@ function renderCerts() {
     const stFob = r.ship === 'S/T' ? fmtDate(r.fobPlan)||'—' : _getSTFob(r.hull);
 
     const certCells = CERT_ITEMS.map(ci => {
-      const s = calcStatus(r[ci.planKey], r[ci.actKey], r.delivered);
+      const s = r.delivered ? 'complete' : statusFor(r[ci.planKey], r[ci.actKey], 7);
       return `<td class="date-calc" style="color:#7C3AED;background:${alt}">${fmtDate(r[ci.planKey])||'—'}</td>
               <td style="background:${alt};padding:4px 6px;">
                 <input type="date" value="${r[ci.actKey]||''}"
@@ -2898,8 +2914,9 @@ function buildRow(r,idx){
   var stCls=r.stage==='1'?'ship-1':r.stage==='2'?'ship-2':'ship-st';
   var alt=idx%2===1?'#F8FAFC':'#FFFFFF';
   var done=!!(r.manualDone||r.shipped||r.fobActual);
-  var st=function(p,a){return badge(calcStatus(p,a,done));};
-  var drawSt=done?'complete':(r.apActual&&r.wdActual&&r.fdActual)?'complete':(r.apActual||r.wdActual||r.fdActual)?'progress':(r.apPlan&&parseDate(r.apPlan)<TODAY)?'delay':'none';
+  var st=function(p,a){return badge(done ? 'complete' : statusFor(p,a,14));};
+  var drawSt=done?'complete':(r.apActual&&r.wdActual&&r.fdActual)?'complete'
+    :([['apPlan','apActual'],['wdPlan','wdActual'],['fdPlan','fdActual']].some(function(k){return statusFor(r[k[0]],r[k[1]],7)==='delay';}))?'delay':'progress';
   var drawLbl={complete:'Done',progress:'In Prog',delay:'Delayed',none:'—'}[drawSt];
   return '<tr onclick="showDetail('+r.id+')"'+(r.closed?' class="row-closed"':'')+' style="cursor:pointer;background:'+alt+'">'
     +'<td class="hull" style="background:'+alt+'">'+r.hull+'</td>'
