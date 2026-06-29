@@ -1790,7 +1790,9 @@ function showDetail(id){
     });
     return '<div class="dp-tab-panel" id="dp-panel-schedule">'
       +'<div class="dp-section"><div class="dp-sec-title" style="color:#1D4ED8">FOB Milestone Actuals</div>'
-      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+rows+'</div>'+_tabSaveBtn(id)+'</div></div>';
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+rows+'</div>'
+      +_memoBox(id,'schedMemo','Schedule Memo / Notes')
+      +_tabSaveBtn(id)+'</div></div>';
   }
 
   function _buildDrawingPanel(r,id) {
@@ -1844,7 +1846,7 @@ function showDetail(id){
     return '<div class="dp-tab-panel" id="dp-panel-certs">'
       +'<div class="dp-section"><div class="dp-sec-title" style="color:#5B21B6">Certificates</div>'
       +'<div style="font-size:10px;color:#64748B;margin-bottom:10px;">Default plan = Sea Trial date · editable</div>'
-      +rows+_tabSaveBtn(id)+'</div></div>';
+      +rows+_memoBox(id,'certMemo','Certificate Memo / Notes')+_tabSaveBtn(id)+'</div></div>';
   }
 
   var stageNames=['1st','2nd','3rd','Other'];
@@ -1903,6 +1905,14 @@ function saveDetailRecord(id){
   saveData(true);
   if(SUPABASE_READY && sb){ cloudSaveOne(r); }
   showToast('Saved — Hull ' + r.hull + ((SUPABASE_READY && sb) ? ' ☁' : ' (local)'), 'success');
+}
+
+// Reusable "Notes" memo box (same amber style as the Drawing tab memo).
+function _memoBox(id, key, label){
+  return '<div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:12px;margin-top:10px;">'
+    + '<label style="font-size:11px;font-weight:700;color:#92400E;display:block;margin-bottom:6px">' + label + '</label>'
+    + '<textarea style="width:100%;background:#fff;border:1px solid #FED7AA;color:#0F172A;font-family:inherit;font-size:12px;padding:8px;border-radius:4px;outline:none;resize:vertical;min-height:60px;"'
+    + ' data-rid="' + id + '" data-key="' + key + '" oninput="updateFieldByData(this)">' + (DATA[id][key] || '') + '</textarea></div>';
 }
 
 // Bound to inline oninput/onchange on date inputs in the detail panel.
@@ -2417,7 +2427,7 @@ const STORAGE_KEY_EDITS = 'jrc_fob_edits_v2';    // edits on existing hulls
 const STORAGE_KEY_ADDED = 'jrc_fob_added_hulls';  // newly added hulls
 
 const EDITABLE_FIELDS = [
-  'jrcOrder','hwoOrder','contractDate','fobPlan','drawMemo',
+  'jrcOrder','hwoOrder','contractDate','fobPlan','drawMemo','schedMemo','certMemo',
   'order','poNum','poDate','hwSched','readiness','manualDone',
   'apPlan','apActual','wdPlan','wdActual','fdPlan','fdActual',
   'lcPlan','lcActual','fobActual','fob2Plan','fob2Actual','fob3Plan','fob3Actual','fobSTPlan','fobSTActual',
