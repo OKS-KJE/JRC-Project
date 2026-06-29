@@ -1762,17 +1762,8 @@ function showDetail(id){
   }).join('');
 
   // Build tab panel HTML using string concatenation (no nested template literals)
+  // (updateByData / updateFieldByData are defined globally — see above.)
 
-  function updateByData(input) {
-    var rid = parseInt(input.getAttribute('data-rid'));
-    var key = input.getAttribute('data-key');
-    updateActual(rid, key, input.value);
-  }
-  function updateFieldByData(input) {
-    var rid = parseInt(input.getAttribute('data-rid'));
-    var key = input.getAttribute('data-key');
-    updateField(rid, key, input.value);
-  }
   function _buildSchedulePanel(r,id) {
     // "1st Sched" (hwSched) auto-fills the FOB 1st Plan when it's still empty
     if(r.hwSched && !r.fobPlan){ r.fobPlan = r.hwSched; }
@@ -1912,6 +1903,21 @@ function saveDetailRecord(id){
   saveData(true);
   if(SUPABASE_READY && sb){ cloudSaveOne(r); }
   showToast('Saved — Hull ' + r.hull + ((SUPABASE_READY && sb) ? ' ☁' : ' (local)'), 'success');
+}
+
+// Bound to inline oninput/onchange on date inputs in the detail panel.
+// MUST be global — inline handlers are evaluated in global scope, so these
+// cannot live inside showDetail() (that caused "updateByData is not defined"
+// and silently dropped schedule/drawing/cert date edits).
+function updateByData(input){
+  var rid = parseInt(input.getAttribute('data-rid'));
+  var key = input.getAttribute('data-key');
+  updateActual(rid, key, input.value);
+}
+function updateFieldByData(input){
+  var rid = parseInt(input.getAttribute('data-rid'));
+  var key = input.getAttribute('data-key');
+  updateField(rid, key, input.value);
 }
 
 
