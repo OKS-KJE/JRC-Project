@@ -1165,7 +1165,24 @@ const SUPABASE_READY =
   SUPABASE_KEY.indexOf('YOUR_') === -1 &&
   SUPABASE_KEY.length > 20;
 const sb = (window.supabase && SUPABASE_READY)
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      global: {
+        // Some sandboxed iframe previews (about:srcdoc) proxy fetch via
+        // window.postMessage, which cannot structured-clone a Headers object
+        // (→ DataCloneError). Flatten any Headers/Map to a plain object so the
+        // request serializes. No-op in a normal browser tab.
+        fetch: (input, init) => {
+          init = init || {};
+          var h = init.headers;
+          if(h && typeof h.forEach === 'function' && !Array.isArray(h)){
+            var plain = {};
+            h.forEach(function(v, k){ plain[k] = v; });
+            init = Object.assign({}, init, { headers: plain });
+          }
+          return fetch(input, init);
+        }
+      }
+    })
   : null;
 console.log('[JRC] storage mode:', (SUPABASE_READY && sb) ? 'Supabase (cloud)' : 'localStorage (local)');
 
@@ -1782,7 +1799,7 @@ function showDetail(id){
     });
     return '<div class="dp-tab-panel" id="dp-panel-schedule">'
       +'<div class="dp-section"><div class="dp-sec-title" style="color:#1D4ED8">FOB Milestone Actuals</div>'
-      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+rows+'</div></div></div>';
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+rows+'</div>'+_tabSaveBtn(id)+'</div></div>';
   }
 
   function _buildDrawingPanel(r,id) {
@@ -1811,7 +1828,7 @@ function showDetail(id){
       +' data-rid="'+id+'" data-key="drawMemo" oninput="updateFieldByData(this)">'+(r.drawMemo||'')+'</textarea></div>';
     return '<div class="dp-tab-panel" id="dp-panel-drawing">'
       +'<div class="dp-section"><div class="dp-sec-title" style="color:#5B21B6">Drawing — AP / WD / FD</div>'
-      +rows+memo+'</div></div>';
+      +rows+memo+_tabSaveBtn(id)+'</div></div>';
   }
 
   function _buildCertsPanel(r,id) {
@@ -1836,7 +1853,7 @@ function showDetail(id){
     return '<div class="dp-tab-panel" id="dp-panel-certs">'
       +'<div class="dp-section"><div class="dp-sec-title" style="color:#5B21B6">Certificates</div>'
       +'<div style="font-size:10px;color:#64748B;margin-bottom:10px;">Default plan = Sea Trial date · editable</div>'
-      +rows+'</div></div>';
+      +rows+_tabSaveBtn(id)+'</div></div>';
   }
 
   var stageNames=['1st','2nd','3rd','Other'];
@@ -1863,7 +1880,7 @@ function showDetail(id){
     +'<div class="dp-row-edit"><span class="dp-key">Remarks</span>'
       +'<input class="dp-edit-input" type="text" value="'+(r.remark||'')+'" placeholder="Notes…"'
       +' oninput="updateField('+id+',\'remark\',this.value)" onchange="updateField('+id+',\'remark\',this.value)"></div>'
-    +'</div></div>'
+    +_tabSaveBtn(id)+'</div></div>'
     // TAB: Schedule
     + _buildSchedulePanel(r,id)
     // TAB: Drawing
@@ -1879,6 +1896,22 @@ function showDetail(id){
 
 function closeDetail(){
   document.getElementById('detailPanel').classList.remove('open');
+}
+
+// Manual "Save" button shown on each detail-panel tab.
+function _tabSaveBtn(id){
+  return '<div style="margin-top:14px;display:flex;justify-content:flex-end;">'
+    + '<button onclick="saveDetailRecord('+id+')" '
+    + 'style="background:#16A34A;color:#fff;border:none;border-radius:6px;padding:9px 18px;'
+    + 'font-size:12px;font-weight:700;cursor:pointer;">💾 저장 / Save</button></div>';
+}
+// Persist this hull immediately: local cache + cloud (no debounce).
+function saveDetailRecord(id){
+  var r = DATA[id];
+  if(!r) return;
+  saveData(true);
+  if(SUPABASE_READY && sb){ cloudSaveOne(r); }
+  showToast('Saved — Hull ' + r.hull + ((SUPABASE_READY && sb) ? ' ☁' : ' (local)'), 'success');
 }
 
 
@@ -1949,6 +1982,16 @@ function updateField(id, key, val) {
   renderDashboard();
   saveData(true);
   cloudSaveOneDebounced(DATA[id]);
+  _flashFieldSaved(id);
+}
+// Brief "Saved" confirmation for Basic-Info field edits, debounced so typing
+// in a text field doesn't fire a toast per keystroke.
+var _fieldToastTimer = null;
+function _flashFieldSaved(id){
+  if(_fieldToastTimer) clearTimeout(_fieldToastTimer);
+  _fieldToastTimer = setTimeout(function(){
+    if(DATA[id]) showToast('Saved — Hull ' + DATA[id].hull, 'success');
+  }, 600);
 }
 // "1st Sched" (hwSched) → auto-fill FOB 1st Plan (fobPlan).
 // Fills the plan when it's empty; if the FOB 1st Plan still mirrors the
@@ -1968,6 +2011,7 @@ function syncHwSched(id, val){
   renderDashboard();
   saveData(true);
   cloudSaveOneDebounced(DATA[id]);
+  _flashFieldSaved(id);
 }
 function fillTodayIfEmpty(input) {
   if (!input.value) {
@@ -2367,6 +2411,7 @@ const STORAGE_KEY_EDITS = 'jrc_fob_edits_v2';    // edits on existing hulls
 const STORAGE_KEY_ADDED = 'jrc_fob_added_hulls';  // newly added hulls
 
 const EDITABLE_FIELDS = [
+  'jrcOrder','hwoOrder','contractDate','fobPlan','drawMemo',
   'order','poNum','poDate','hwSched','readiness','manualDone',
   'apPlan','apActual','wdPlan','wdActual','fdPlan','fdActual',
   'lcPlan','lcActual','fobActual','fob2Plan','fob2Actual','fob3Plan','fob3Actual','fobSTPlan','fobSTActual',
@@ -2404,6 +2449,19 @@ function saveData(silent) {
 //  to the existing localStorage flow, so the app works exactly as before.
 // ══════════════════════════════════════════════════════════════
 
+// Turn a Supabase/JS error object into a readable string (avoids "[object Object]").
+function _errStr(e){
+  if(!e) return 'unknown error';
+  if(typeof e === 'string') return e;
+  var p = [];
+  if(e.message) p.push(e.message);
+  if(e.code) p.push('code=' + e.code);
+  if(e.details) p.push(e.details);
+  if(e.hint) p.push('hint: ' + e.hint);
+  if(!p.length){ try { return JSON.stringify(e); } catch(_){ return String(e); } }
+  return p.join(' | ');
+}
+
 // Load all hulls from Supabase into DATA. Falls back to localStorage when
 // the cloud isn't configured, is empty, or errors out.
 async function cloudLoad(){
@@ -2421,9 +2479,9 @@ async function cloudLoad(){
     }
     setCloudStatus('synced');
   }catch(e){
-    console.error('cloudLoad failed:', e);
+    console.error('cloudLoad failed:', _errStr(e), e);
     setCloudStatus('error');
-    showToast('Cloud load failed — using local data', 'error');
+    showToast('Cloud load failed: ' + _errStr(e), 'error');
     loadSavedData();
   }
 }
@@ -2445,9 +2503,9 @@ async function cloudSave(){
     setCloudStatus('synced');
     showToast('Saved to Supabase — ' + rows.length + ' hulls', 'success');
   }catch(e){
-    console.error('cloudSave failed:', e);
+    console.error('cloudSave failed:', _errStr(e), e);
     setCloudStatus('error');
-    showToast('Cloud save failed — saved locally instead', 'error');
+    showToast('Cloud save failed: ' + _errStr(e), 'error');
     saveData(true);
   }
 }
@@ -2463,7 +2521,7 @@ async function cloudSaveOne(r){
     });
     if(error) throw error;
     setCloudStatus('synced');
-  }catch(e){ console.error('cloudSaveOne failed:', e); setCloudStatus('error'); }
+  }catch(e){ console.error('cloudSaveOne failed:', _errStr(e), e); setCloudStatus('error'); }
 }
 
 // Debounced per-record auto-save: rapid edits to one hull collapse into a
